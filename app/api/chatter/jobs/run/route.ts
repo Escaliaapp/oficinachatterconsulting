@@ -14,7 +14,13 @@ export async function POST(request: Request) {
     await db.from("chatter_jobs").update({ status: "running" }).eq("id", job.id);
     const leads = await searchGooglePlaces(job.objective, 20);
     let sent = 0;
-    for (const lead of leads) { if (lead.phone || lead.website) { await createGoHighLevelContact({ name: lead.name, phone: lead.phone, website: lead.website, companyName: lead.name, source: "Diego · Google Places" }); sent++; } }
+    for (const lead of leads) {
+      const existing = lead.placeId ? await db.from("chatter_leads").select("id").eq("place_id", lead.placeId).maybeSingle() : { data: null };
+      if (existing.data) { await db.from("chatter_leads").insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, crm_status: "duplicate" }); continue; }
+      let crmStatus = "pending"; let crmContactId: string | null = null;
+      if (lead.phone || lead.website) { const created = await createGoHighLevelContact({ name: lead.name, phone: lead.phone, website: lead.website, companyName: lead.name, source: "Diego · Google Places" }); crmContactId = created.contact?.id ?? null; crmStatus = "sent"; sent++; }
+      await db.from("chatter_leads").insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, crm_contact_id: crmContactId, crm_status: crmStatus });
+    }
     const summary = `Google Places encontró ${leads.length} prospectos; ${sent} enviados a GoHighLevel.`;
     await db.from("chatter_jobs").update({ status: "completed", result_summary: summary }).eq("id", job.id);
     return json({ ok: true, jobId: job.id, found: leads.length, sentToGoHighLevel: sent, leads });

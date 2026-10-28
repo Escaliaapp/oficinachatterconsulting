@@ -1,0 +1,3 @@
+import { apiError, json, requiredEnv } from "@/lib/supabase/server";
+import { requireOfficeUser } from "@/lib/supabase/server";
+export async function GET(request: Request) { try { const { db } = await requireOfficeUser(request); await requiredEnv("TELEGRAM_OWNER_CHAT_ID"); const result = await db.from("chatter_leads").select("id,job_id,name,address,phone,website,maps_url,source,crm_contact_id,crm_status,created_at").order("created_at", { ascending: false }).limit(200); if (result.error) throw new Error("leads_read_failed"); return json({ leads: result.data ?? [] }); } catch (error) { return apiError(error); } }
