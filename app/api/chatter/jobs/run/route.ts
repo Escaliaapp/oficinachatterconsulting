@@ -38,9 +38,9 @@ export async function POST(request: Request) {
     }
     for (const person of people) {
       const name = [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Contacto Apollo';
-      await db.from("chatter_leads").insert({ job_id: job.id, name, source: "apollo", crm_status: "pending" });
+      await db.from("chatter_leads").insert({ job_id: job.id, name, website: person.linkedinUrl ?? person.linkedin_url, source: "apollo_icp", crm_status: "pending" });
     }
-    const summary = `Google Places encontró ${leads.length} empresas; Apollo encontró ${people.length} responsables; ${sent} enviados a GoHighLevel.`;
+    const summary = `Google Places encontró ${leads.length} empresas; Apollo encontró ${people.length} responsables que encajan con el ICP de Chatter Consulting; ${sent} enviados a GoHighLevel.`;
     await db.from("chatter_jobs").update({ status: "completed", result_summary: summary }).eq("id", job.id);
     return json({ ok: true, jobId: job.id, found: leads.length, sentToGoHighLevel: sent, leads });
   } catch (error) { return apiError(error); }
