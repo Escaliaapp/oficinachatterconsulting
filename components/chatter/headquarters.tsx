@@ -21,6 +21,7 @@ type Idea = {id:string;text:string;votes:number};
 type IntegrationStatus = {telegram:boolean;database:boolean;mode:'local'|'production'};
 type RealJob = {id:string;employee_id:string;objective:string;status:string;result_summary?:string|null;created_at:string};
 type Lead = {id:string;name:string;address?:string|null;phone?:string|null;website?:string|null;maps_url?:string|null;source:string;crm_contact_id?:string|null;crm_status:string;created_at:string};
+const DEFAULT_SPOTIFY = 'https://open.spotify.com/episode/7makk4oTQel546B0PZlDM5';
 
 function Brand({small=false}:{small?:boolean}) {
   return <div className={`hq-brand ${small?'small':''}`}><svg viewBox="0 0 42 42" fill="none" aria-hidden="true"><path d="M32 10 23 5a5 5 0 0 0-5 0L8 11a5 5 0 0 0-2.5 4.3v11.4A5 5 0 0 0 8 31l10 6a5 5 0 0 0 5 0l9-5" stroke="currentColor" strokeWidth="3.3" strokeLinecap="round"/><path d="m29 16-8-4-9 5v9l9 5 8-5-8-5" stroke="currentColor" strokeWidth="3.3" strokeLinecap="round" strokeLinejoin="round"/></svg>{!small&&<div>chatter<span>CONSULTING</span></div>}</div>;
@@ -52,6 +53,8 @@ export default function Headquarters() {
   const [showActivity,setShowActivity] = useState(true);
   const [meetingIds,setMeetingIds] = useState<string[]>(['hermes','ana','diego']);
   const [fullScreen,setFullScreen] = useState(false);
+  const [musicQueue,setMusicQueue] = useState<string[]>([DEFAULT_SPOTIFY]);
+  const [musicUrl,setMusicUrl] = useState('');
   const shellRef = useRef<HTMLDivElement>(null);
 
   useEffect(()=>{
@@ -158,6 +161,7 @@ export default function Headquarters() {
               {view==='office'?<>
                 <div className="hq-office-caption"><span className="hq-caption-dot"/>CHATTER HEADQUARTERS<span>EST. 2026</span></div>
                 <OfficeScene employees={state.employees} agents={state.agents} selectedId={state.selectedId} onSelect={focusEmployee} paused={state.paused} speed={state.speed} labels={labels} cameraCommand={camera} onConversation={openConversation}/>
+                <section className="hq-music-panel"><div><span className="hq-outline-pill">MÚSICA DE LA OFICINA</span><h3>Cola de concentración</h3><p>Hermes puede mantener una cola de contenido para acompañar el trabajo.</p></div><form onSubmit={e=>{e.preventDefault();const value=musicUrl.trim();if(!/^https:\/\/open\.spotify\.com\/(track|episode|playlist)\//.test(value))return;setMusicQueue(q=>q.includes(value)?q:[...q,value]);setMusicUrl('');}}><input value={musicUrl} onChange={e=>setMusicUrl(e.target.value)} placeholder="Pega un enlace de Spotify…" aria-label="Enlace de Spotify"/><button className="hq-secondary" type="submit">Agregar a la cola</button></form><div className="hq-music-queue">{musicQueue.map((url,index)=>{const match=url.match(/open\.spotify\.com\/(track|episode|playlist)\/([^?]+)/);return <article key={url}><span>{index+1}</span><div><strong>{match?.[1]==='episode'?'Episodio':match?.[1]==='playlist'?'Playlist':'Canción'} de Spotify</strong><small>{index===0?'Listo para reproducir':'En cola'}</small></div><button onClick={()=>setMusicQueue(q=>q.filter(item=>item!==url))} aria-label="Quitar de la cola"><X size={13}/></button></article>;})}</div>{musicQueue[0]&&<iframe title="Spotify de la oficina" src={musicQueue[0].replace('open.spotify.com/','open.spotify.com/embed/')} width="100%" height="152" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"/>}</section>
                 <div className="hq-office-label"><span className="hq-floor-number">01</span><div><strong>Un lugar para crear el futuro.</strong><span>PLANTA PRINCIPAL · 10 ESPACIOS · INFINITAS IDEAS</span></div></div>
                 <button className="hq-expand hq-icon" onClick={toggleFullscreen} aria-label={fullScreen?'Salir de pantalla completa':'Pantalla completa'}><Expand size={17}/></button>
                 <div className="hq-scene-controls"><div className="hq-camera-controls"><button onClick={()=>cameraMove('zoom-out')} aria-label="Alejar cámara"><Minus size={15}/></button><span>ZOOM</span><button onClick={()=>cameraMove('zoom-in')} aria-label="Acercar cámara"><Plus size={15}/></button><i/><button onClick={()=>cameraMove('rotate')} aria-label="Rotar cámara"><RotateCcw size={15}/></button><button onClick={()=>cameraMove('reset')} aria-label="Restablecer cámara"><Focus size={16}/></button></div><div className="hq-simulation-controls"><button onClick={togglePause} aria-label={state.paused?'Reanudar simulación':'Pausar simulación'}>{state.paused?<Play size={14}/>:<Pause size={14}/>}</button><i/>{([1,2,4] as const).map(speed=><button key={speed} onClick={()=>setSpeed(speed)} className={state.speed===speed?'active':''} aria-label={`Velocidad ${speed}x`}>{speed}×</button>)}<i/><button onClick={()=>setLabels(!labels)} className={labels?'label-active':''} aria-label="Mostrar u ocultar nombres" aria-pressed={labels}><Eye size={15}/></button></div></div>
