@@ -17,6 +17,9 @@ const CONVERSATION_SPOTS: [Point2, Point2][] = [
   [[4, -2], [5.2, -2]],
   [[7.3, -2], [8.5, -2]],
 ];
+const OBJECTIVES: Record<string, string> = { hermes: 'alinear prioridades y desbloqueos del equipo', luna: 'coordinar la agenda y las próximas citas', diego: 'mejorar la calidad y cobertura de los prospectos', mateo: 'optimizar campañas con el presupuesto autorizado', valentina: 'convertir briefs en piezas listas para revisión', ana: 'mejorar el mensaje y los guiones de campaña', lucia: 'captar oportunidades y atribuir cada prospecto', jorge: 'mantener el CRM limpio y automatizado', pablo: 'medir resultados y preparar el cierre diario', carlos: 'convertir conversaciones en citas calificadas' };
+const PAIR_DECISIONS: Record<string, string> = { 'ana-valentina': 'Ana entrega un brief y Valentina prepara una variante visual para revisión.', 'diego-jorge': 'Diego comparte prospectos con fuente y Jorge los deduplica antes de activar seguimiento.', 'jorge-lucia': 'Lucía entrega prospectos atribuidos y Jorge confirma su entrada al CRM.', 'carlos-jorge': 'Jorge asigna contactos calificados y Carlos prepara el siguiente contacto.', 'mateo-pablo': 'Mateo comparte resultados de campaña y Pablo los incorpora al reporte.', 'hermes-pablo': 'Hermes define prioridades y Pablo prepara métricas para el cierre diario.' };
+function decisionFor(a: string, b: string) { return PAIR_DECISIONS[[a,b].sort().join('-')] ?? `${OBJECTIVES[a] ?? 'el objetivo del equipo'} y ${OBJECTIVES[b] ?? 'el siguiente paso'} quedan alineados.`; }
 
 function event(state: OfficeState, id: string, type: OfficeEvent['type'], message: string, conversationId?: string): OfficeEvent {
   const sequence=state.events.reduce((max,item)=>Math.max(max,Number(/^event-(\d+)-/.exec(item.id)?.[1]||0)),0)+1;
@@ -86,7 +89,7 @@ export function commandAgent(state: OfficeState, id: string, action: AgentComman
     agents[index] = { ...travel(agent, spot[0], 'talk', 'talking'), partnerId: agents[chosen].id, conversationId };
     agents[chosen] = { ...travel(agents[chosen], spot[1], 'talk', 'talking'), partnerId: id, conversationId };
     const name = state.employees.find(e => e.id === agents[chosen].id)?.name ?? 'un compañero';
-    message = `Comparte ideas con ${name} en la sala de descanso`;
+    message = `${decisionFor(id, agents[chosen].id)} (${name})`;
     return addEvent({ ...state, agents }, event(state, id, 'social', message, conversationId));
   }
   return addEvent({ ...state, agents }, event(state, id, type, message));
