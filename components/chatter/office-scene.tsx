@@ -1,5 +1,4 @@
 'use client';
-import { visibleSpeech } from '@/lib/chatter/dialogue';
 
 import { Component, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
@@ -424,11 +423,10 @@ export default function OfficeScene(props: OfficeSceneProps) {
   </Canvas></SceneBoundary><div className="hq-label-layer" style={{position:'absolute',inset:0,pointerEvents:'none',zIndex:11}}>{props.employees.map(employee=>{
     const runtime=props.agents.find(a=>a.id===employee.id);const selected=props.selectedId===employee.id;
     if(!runtime)return null;
-    const speech=visibleSpeech(employee,runtime,props.agents);
-    if(!props.labels&&!selected&&!speech)return null;
+    if(!props.labels&&!selected)return null;
     return <div key={employee.id} ref={element=>{labelElements.current[employee.id]=element;}} style={{position:'absolute',top:0,left:0,display:'flex',pointerEvents:'auto',visibility:'hidden'}}>
       <button className={`scene-person-label${selected?' selected':''}`} onClick={()=>props.onSelect(employee.id)} title={`${employee.name}: ${runtime.activity}`}><span style={{width:5,height:5,borderRadius:9,background:employee.color,marginRight:5}}/>{employee.name}</button>
-      {speech&&<button className="scene-speech-bubble" onClick={()=>props.onConversation?.(employee.id)}><strong>{employee.name} · {runtime.state==='meeting'?'Reunión':'Trabajo en equipo'}</strong><span>{speech}</span><small>Propuesta simulada</small></button>}
+      {runtime.state==='talking'&&<button className="scene-conversation-button" aria-label={`Ver conversación de ${employee.name}`} onClick={()=>props.onConversation?.(employee.id)}>···</button>}
     </div>;
   })}</div></div>;
 }
