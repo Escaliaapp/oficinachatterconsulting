@@ -27,7 +27,7 @@ export function requireLocalOffice(request: Request) {
 
 export async function hermesConversation(db: SupabaseClient, chatId: string) {
   const existing = await db.from("chatter_conversations").select("id").eq("channel", "telegram").eq("external_chat_id", chatId).maybeSingle();
-  if (existing.error) throw new ApiError(503, "conversation_lookup_failed", "No se pudo consultar la conversación de Hermes.");
+  if (existing.error) throw new ApiError(503, "conversation_lookup_failed", `No se pudo consultar la conversación de Hermes (${existing.error.code || "provider_error"}).`);
   if (existing.data) return String(existing.data.id);
   const created = await db.from("chatter_conversations").insert({ channel: "telegram", external_chat_id: chatId }).select("id").single();
   if (created.error || !created.data) throw new ApiError(503, "conversation_create_failed", "No se pudo crear la conversación de Hermes.");
