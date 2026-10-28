@@ -2,6 +2,7 @@ import { apiError, json, requiredEnv, requireOfficeUser, serviceSupabase } from 
 import { searchGooglePlaces } from "@/lib/chatter/operations/google-places";
 import { createGoHighLevelContact } from "@/lib/chatter/operations/gohighlevel";
 import { searchApolloPeople } from "@/lib/chatter/operations/apollo";
+import { randomDiegoCity } from "@/lib/chatter/operations/diego-cities";
 
 export async function POST(request: Request) {
   try {
@@ -10,7 +11,14 @@ export async function POST(request: Request) {
     const db = cronSecret && cronAuth === cronSecret ? serviceSupabase() : (await requireOfficeUser(request)).db;
     const { data: jobs, error } = await db.from("chatter_jobs").select("id,employee_id,objective,status").eq("status", "queued").eq("employee_id", "diego").order("created_at", { ascending: true }).limit(1);
     if (error) throw new Error("jobs_read_failed");
-    const job = jobs?.[0];
+    let job = jobs?.[0];
+    if (!job && cronSecret && cronAuth === cronSecret) {
+      const city = randomDiegoCity();
+      const key = `diego-daily-${new Date().toISOString().slice(0,10)}`;
+      const created = await db.from("chatter_jobs").upsert({ employee_id: "diego", objective: `Busca 10 inmobiliarias en ${city}`, source: "schedule", requested_by: "system", idempotency_key: key, status: "queued" }, { onConflict: "idempotency_key" }).select("id,employee_id,objective,status").single();
+      if (created.error) throw new Error("daily_job_create_failed");
+      job = created.data;
+    }
     if (!job) return json({ ok: true, message: "No hay tareas de Diego en cola." });
     const dailyLimit = Math.max(1, Number(process.env.DIEGO_DAILY_LIMIT || 10));
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
