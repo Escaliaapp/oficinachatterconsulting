@@ -39,6 +39,6 @@ export async function appendHermesMessage(db: SupabaseClient, message: { convers
   const result = message.externalMessageId
     ? await db.from("chatter_messages").upsert(row,{onConflict:"source,external_message_id",ignoreDuplicates:true})
     : await db.from("chatter_messages").insert(row);
-  if (result.error) throw new ApiError(503, "message_store_failed", "No se pudo guardar el mensaje.");
+  if (result.error) throw new ApiError(503, "message_store_failed", `No se pudo guardar el mensaje (${result.error.code || "provider_error"}).`);
 }
 
