@@ -1,11 +1,12 @@
-import { apiError, json, requiredEnv } from "@/lib/supabase/server";
-import { requireOfficeUser } from "@/lib/supabase/server";
+import { apiError, json, requiredEnv, requireOfficeUser, serviceSupabase } from "@/lib/supabase/server";
 import { searchGooglePlaces } from "@/lib/chatter/operations/google-places";
 import { createGoHighLevelContact } from "@/lib/chatter/operations/gohighlevel";
 
 export async function POST(request: Request) {
   try {
-    const { db } = await requireOfficeUser(request);
+    const cronSecret = process.env.CHATTER_CRON_SECRET?.trim();
+    const cronAuth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    const db = cronSecret && cronAuth === cronSecret ? serviceSupabase() : (await requireOfficeUser(request)).db;
     const { data: jobs, error } = await db.from("chatter_jobs").select("id,employee_id,objective,status").eq("status", "queued").eq("employee_id", "diego").order("created_at", { ascending: true }).limit(1);
     if (error) throw new Error("jobs_read_failed");
     const job = jobs?.[0];
