@@ -1,4 +1,5 @@
-import { requiredEnv } from "@/lib/supabase/server";
+import { connectorCredentials } from "../connectors/server";
+import { ApiError } from "@/lib/supabase/server";
 
 export type GoHighLevelContact = {
   name?: string;
@@ -12,17 +13,18 @@ export type GoHighLevelContact = {
 };
 
 export async function createGoHighLevelContact(contact: GoHighLevelContact) {
+  const credentials = await connectorCredentials("gohighlevel");
   const response = await fetch("https://services.leadconnectorhq.com/contacts/", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${requiredEnv("GOHIGHLEVEL_API_KEY")}`,
+      Authorization: `Bearer ${credentials.GOHIGHLEVEL_API_KEY}`,
       Version: "2021-07-28",
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ locationId: requiredEnv("GOHIGHLEVEL_LOCATION_ID"), ...contact }),
-    cache: "no-store",
+    body: JSON.stringify({ locationId: credentials.GOHIGHLEVEL_LOCATION_ID, ...contact }),
+    signal: AbortSignal.timeout(20000), cache: "no-store",
   });
-  if (!response.ok) throw new Error("gohighlevel_contact_failed");
+  if (!response.ok) throw new ApiError(502, "gohighlevel_contact_failed", `El CRM rechazó el contacto (HTTP ${response.status}). Revisa permisos y Location ID.`);
   return response.json() as Promise<{ contact?: { id?: string } }>;
 }

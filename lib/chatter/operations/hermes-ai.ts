@@ -1,3 +1,4 @@
+import { connectorConfig } from "../connectors/server";
 import "server-only";
 import { OPERATIONAL_AGENTS } from "./registry";
 import { ApiError } from "@/lib/supabase/server";
@@ -6,7 +7,9 @@ type ChatMessage = { author_type: string; body: string };
 type OfficeAgent = { id: string; state: string; activity: string };
 
 export async function answerAsHermes(input: { messages: ChatMessage[]; office: OfficeAgent[]; jobs: unknown[] }) {
-  const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
+  const router = await connectorConfig("openrouter");
+  if (router.configured && !router.enabled) throw new ApiError(409, "ai_disabled", "Activa OpenRouter en Conectores para conversar con Hermes.");
+  const openRouterKey = router.enabled ? router.credentials.OPENROUTER_API_KEY : undefined;
   const key = openRouterKey || process.env.OPENAI_API_KEY?.trim();
   if (!key) return null;
   const endpoint = openRouterKey ? "https://openrouter.ai/api/v1/responses" : "https://api.openai.com/v1/responses";

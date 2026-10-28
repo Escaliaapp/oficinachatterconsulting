@@ -1,47 +1,90 @@
-import { apiError, json, requiredEnv, requireOfficeUser, serviceSupabase } from "@/lib/supabase/server";
-import { searchGooglePlaces } from "@/lib/chatter/operations/google-places";
-import { createGoHighLevelContact } from "@/lib/chatter/operations/gohighlevel";
-import { searchApolloPeople } from "@/lib/chatter/operations/apollo";
-import { randomDiegoCity } from "@/lib/chatter/operations/diego-cities";
+import { z } from 'zod';
+import { apiError, ApiError, json, parseBody, requireOfficeUser, serviceSupabase, verifyOrigin } from '@/lib/supabase/server';
+import { connectorConfig } from '@/lib/chatter/connectors/server';
+import { searchGooglePlaces } from '@/lib/chatter/operations/google-places';
+import { createGoHighLevelContact } from '@/lib/chatter/operations/gohighlevel';
+import { searchApolloPeople } from '@/lib/chatter/operations/apollo';
+import { randomDiegoCity } from '@/lib/chatter/operations/diego-cities';
 
-export async function POST(request: Request) {
+export const maxDuration = 300;
+export async function POST(request: Request) { return execute(request, false); }
+export async function GET(request: Request) { return execute(request, true); }
+
+async function execute(request: Request, scheduled: boolean) {
+  let jobId: string | undefined;
+  let saved = 0;
+  let stage = 'configuración';
   try {
-    const cronSecret = process.env.CHATTER_CRON_SECRET?.trim();
-    const cronAuth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    const db = cronSecret && cronAuth === cronSecret ? serviceSupabase() : (await requireOfficeUser(request)).db;
-    const { data: jobs, error } = await db.from("chatter_jobs").select("id,employee_id,objective,status").eq("status", "queued").eq("employee_id", "diego").order("created_at", { ascending: true }).limit(1);
-    if (error) throw new Error("jobs_read_failed");
-    let job = jobs?.[0];
-    if (!job && cronSecret && cronAuth === cronSecret) {
-      const city = randomDiegoCity();
-      const key = `diego-daily-${new Date().toISOString().slice(0,10)}`;
-      const created = await db.from("chatter_jobs").upsert({ employee_id: "diego", objective: `Busca 10 inmobiliarias en ${city}`, source: "schedule", requested_by: "system", idempotency_key: key, status: "queued" }, { onConflict: "idempotency_key" }).select("id,employee_id,objective,status").single();
-      if (created.error) throw new Error("daily_job_create_failed");
-      job = created.data;
+    const bearer = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+    const isCron = [process.env.CRON_SECRET, process.env.CHATTER_CRON_SECRET].some(secret => Boolean(secret?.trim() && bearer === secret.trim()));
+    if (scheduled && !isCron) throw new ApiError(401, 'invalid_cron', 'Ejecución programada no autorizada.');
+    const db = isCron ? serviceSupabase() : (await requireOfficeUser(request)).db;
+    if (!isCron) verifyOrigin(request);
+    const input = request.headers.get('content-type')?.includes('application/json') ? await parseBody(request, z.object({ source: z.enum(['apollo','google']).optional() }).strict()) : {};
+    const [apollo, google, crm] = await Promise.all([connectorConfig('apollo'), connectorConfig('google'), connectorConfig('gohighlevel')]);
+    if (!apollo.storageReady) throw new ApiError(503, 'operations_setup_required', 'Aplica la migración de Conectores en Supabase para habilitar esta ejecución.');
+    const source = input.source || (apollo.enabled && apollo.configured ? 'apollo' : 'google');
+    const config = source === 'apollo' ? apollo : google;
+    if (!config.enabled || !config.configured) throw new ApiError(409, 'source_disabled', 'Activa y configura la fuente seleccionada en Conectores.');
+    if (scheduled) {
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mazatlan' }).format(new Date());
+      const { error } = await db.from('chatter_jobs').upsert({ employee_id: 'diego', objective: `Busca 10 inmobiliarias en ${randomDiegoCity()}`, source: 'schedule', requested_by: 'system', idempotency_key: `diego-daily-${day}`, status: 'queued' }, { onConflict: 'idempotency_key', ignoreDuplicates: true });
+      if (error) throw new ApiError(503, 'schedule_failed', 'No se pudo preparar la tarea diaria.');
     }
-    if (!job) return json({ ok: true, message: "No hay tareas de Diego en cola." });
-    const dailyLimit = Math.max(1, Number(process.env.DIEGO_DAILY_LIMIT || 10));
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const recent = await db.from("chatter_leads").select("id", { count: "exact", head: true }).gte("created_at", since);
+    const claim = await db.rpc('chatter_claim_diego_job');
+    if (claim.error) throw new ApiError(503, 'claim_failed', 'No se pudo iniciar la tarea. Verifica la migración de Conectores.');
+    const job = claim.data?.[0];
+    if (!job) return json({ ok: true, message: 'No hay tareas en cola o Diego ya está ejecutando otra. Revisa Tareas.' });
+    jobId = job.id;
+    stage = 'límite diario';
+    const dailyLimit = Math.min(10, Math.max(1, Number(process.env.DIEGO_DAILY_LIMIT) || 10));
+    const recent = await db.from('chatter_leads').select('id', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 86400000).toISOString());
+    if (recent.error) throw new ApiError(503, 'quota_read_failed', 'No se pudo verificar el límite diario.');
     const remaining = Math.max(0, dailyLimit - (recent.count ?? 0));
-    if (!remaining) { await db.from("chatter_jobs").update({ status: "completed", result_summary: `No se ejecutó: límite de ${dailyLimit} prospectos alcanzado en las últimas 24 horas.` }).eq("id", job.id); return json({ ok: true, jobId: job.id, message: `Límite de ${dailyLimit} prospectos alcanzado en las últimas 24 horas.` }); }
-    await db.from("chatter_jobs").update({ status: "running" }).eq("id", job.id);
-    const leads = (await searchGooglePlaces(job.objective, Math.min(20, remaining))).slice(0, remaining);
-    const people = process.env.APOLLO_API_KEY?.trim() ? (await searchApolloPeople(job.objective)).slice(0, Math.max(0, remaining - leads.length)) : [];
     let sent = 0;
-    for (const lead of leads) {
-      const existing = lead.placeId ? await db.from("chatter_leads").select("id").eq("place_id", lead.placeId).maybeSingle() : { data: null };
-      if (existing.data) { await db.from("chatter_leads").insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, crm_status: "duplicate" }); continue; }
-      let crmStatus = "pending"; let crmContactId: string | null = null;
-      if (lead.phone || lead.website) { const created = await createGoHighLevelContact({ name: lead.name, phone: lead.phone, website: lead.website, companyName: lead.name, source: "Diego · Google Places" }); crmContactId = created.contact?.id ?? null; crmStatus = "sent"; sent++; }
-      await db.from("chatter_leads").insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, crm_contact_id: crmContactId, crm_status: crmStatus });
+    let duplicates = 0;
+    let crmFailed = 0;
+    if (remaining) {
+      stage = source === 'apollo' ? 'Apollo API' : 'Google Places API';
+      if (source === 'apollo') {
+        const people = (await searchApolloPeople(job.objective)).slice(0, remaining);
+        for (const person of people) {
+          if (!person.id) continue;
+          const record = await db.from('chatter_leads').insert({ job_id: job.id, apollo_person_id: person.id, name: [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Perfil Apollo', address: [person.title, person.organization?.name].filter(Boolean).join(' · '), source: 'apollo_icp', crm_status: 'pending' });
+          if (record.error?.code === '23505') { duplicates++; continue; }
+          if (record.error) throw new ApiError(503, 'lead_save_failed', 'No se pudo guardar el prospecto de Apollo.');
+          saved++;
+        }
+      } else {
+        const places = await searchGooglePlaces(job.objective, remaining);
+        for (const lead of places.slice(0, remaining)) {
+          const record = await db.from('chatter_leads').insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, source: 'google_places', crm_status: 'pending' }).select('id').single();
+          if (record.error?.code === '23505') { duplicates++; continue; }
+          if (record.error) throw new ApiError(503, 'lead_save_failed', 'No se pudo guardar el prospecto de Google.');
+          saved++;
+          if (crm.enabled && crm.configured && (lead.phone || lead.website)) {
+            stage = 'GoHighLevel API';
+            let contactId: string | null = null;
+            try {
+              const result = await createGoHighLevelContact({ name: lead.name, companyName: lead.name, phone: lead.phone, website: lead.website, source: 'Diego · Google Places' });
+              contactId = result.contact?.id ?? null;
+            } catch { /* Preserve the local lead; do not retry external writes blindly. */ }
+            const update = await db.from('chatter_leads').update({ crm_contact_id: contactId, crm_status: contactId ? 'sent' : 'failed' }).eq('id', record.data.id);
+            if (update.error) throw new ApiError(503, 'crm_status_save_failed', 'El prospecto está guardado, pero no se pudo registrar el envío al CRM. Revisa el CRM antes de reintentar.');
+            if (contactId) sent++; else crmFailed++;
+          }
+        }
+      }
     }
-    for (const person of people) {
-      const name = [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Contacto Apollo';
-      await db.from("chatter_leads").insert({ job_id: job.id, name, website: person.linkedinUrl ?? person.linkedin_url, source: "apollo_icp", crm_status: "pending" });
+    const summary = remaining ? `${source === 'apollo' ? 'Apollo API' : 'Google Places API'}: ${saved} prospectos guardados, ${duplicates} duplicados omitidos. CRM: ${sent} enviados, ${crmFailed} fallidos.${source === 'apollo' ? ' Sin enriquecimiento de correo/teléfono; perfiles pendientes de revisión.' : ''} Costo monetario: no medido.` : `Límite de ${dailyLimit} prospectos en 24 horas alcanzado; no se consultaron proveedores.`;
+    const finish = await db.from('chatter_jobs').update({ status: 'completed', result_summary: summary, finished_at: new Date().toISOString() }).eq('id', job.id);
+    if (finish.error) throw new ApiError(503, 'job_save_failed', 'No se pudo guardar el cierre de la tarea.');
+    return json({ ok: true, jobId, found: saved, sentToGoHighLevel: sent, message: summary });
+  } catch (error) {
+    const safe = error instanceof ApiError ? error : new ApiError(503, 'execution_failed', `Falló la etapa ${stage}. Revisa la conexión y los permisos del servicio.`);
+    if (jobId) {
+      try { await serviceSupabase().from('chatter_jobs').update({ status: 'failed', error_code: safe.code, result_summary: `${safe.message} Prospectos guardados antes del error: ${saved}.`, finished_at: new Date().toISOString() }).eq('id', jobId); } catch { /* Keep original safe error. */ }
     }
-    const summary = `Google Places encontró ${leads.length} empresas; Apollo encontró ${people.length} responsables que encajan con el ICP de Chatter Consulting; ${sent} enviados a GoHighLevel.`;
-    await db.from("chatter_jobs").update({ status: "completed", result_summary: summary }).eq("id", job.id);
-    return json({ ok: true, jobId: job.id, found: leads.length, sentToGoHighLevel: sent, leads });
-  } catch (error) { return apiError(error); }
+    return apiError(safe);
+  }
 }

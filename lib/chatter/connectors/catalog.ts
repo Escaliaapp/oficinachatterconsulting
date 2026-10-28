@@ -1,0 +1,8 @@
+export const CONNECTORS = [
+  { id: 'openrouter', name: 'OpenRouter', agent: 'Hermes · Cerebro de IA', description: 'Un proveedor de modelos para conversar y preparar entregas.', cost: 'Pago por uso del modelo', fields: [{ key: 'OPENROUTER_API_KEY', label: 'API key', secret: true }], docs: 'https://openrouter.ai/settings/keys', test: true },
+  { id: 'apollo', name: 'Apollo', agent: 'Diego · Prospección B2B', description: 'Busca responsables de empresas según tu ICP.', cost: 'Búsqueda sin enriquecimiento; sujeto a acceso de tu cuenta', fields: [{ key: 'APOLLO_API_KEY', label: 'API key', secret: true }], docs: 'https://docs.apollo.io/docs/create-api-key', test: true },
+  { id: 'google', name: 'Google Places', agent: 'Diego · Negocios locales', description: 'Encuentra empresas, teléfonos y sitios web en Google Maps.', cost: 'Consumo facturado por Google según tu cuenta', fields: [{ key: 'GOOGLE_MAPS_API_KEY', label: 'API key de Places API', secret: true }], docs: 'https://console.cloud.google.com/apis/credentials', test: false },
+  { id: 'gohighlevel', name: 'GoHighLevel', agent: 'Diego / Jorge · CRM', description: 'Envía los negocios encontrados a tu CRM. OFF conserva los resultados solo en la oficina.', cost: 'Requiere acceso API de tu cuenta de CRM', fields: [{ key: 'GOHIGHLEVEL_API_KEY', label: 'Token de integración', secret: true }, { key: 'GOHIGHLEVEL_LOCATION_ID', label: 'Location ID', secret: false }], docs: 'https://marketplace.gohighlevel.com/docs/', test: false },
+] as const;
+export type ConnectorId = typeof CONNECTORS[number]['id'];
+export type ConnectorStatus = { id: ConnectorId; enabled: boolean; configured: boolean; testedAt: string | null; testOk: boolean | null; message: string | null };
