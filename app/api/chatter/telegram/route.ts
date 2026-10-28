@@ -28,6 +28,14 @@ export async function POST(request: Request) {
     if (message.text) await appendHermesMessage(db,{conversationId,externalMessageId:String(message.message_id),authorType:"owner",authorId:String(message.from?.id??message.chat.id),source:"telegram",body:message.text});
     const parsed = parseHermesCommand(update);
     const token = requiredEnv("TELEGRAM_BOT_TOKEN");
+    if (message.text?.trim().toLowerCase() === "/ejecutar diego") {
+      const run = await fetch(`${requiredEnv("APP_URL")}/api/chatter/jobs/run`, { method: "POST", headers: { Authorization: `Bearer ${requiredEnv("CHATTER_CRON_SECRET")}` }, cache: "no-store" });
+      const result = await run.json() as { message?: string; found?: number; sentToGoHighLevel?: number };
+      const reply = result.found === undefined ? (result.message ?? "No se pudo ejecutar la tarea.") : `✅ Diego terminó la tarea. Encontró ${result.found} prospectos y envió ${result.sentToGoHighLevel ?? 0} a GoHighLevel.`;
+      const sent = await sendTelegram(allowedChat, reply, token);
+      await appendHermesMessage(db,{conversationId,externalMessageId:sent?.message_id?String(sent.message_id):undefined,authorType:"hermes",authorId:"hermes",source:"telegram",body:reply});
+      return Response.json({ ok: true });
+    }
     if (parsed.reply) {
       const sent = await sendTelegram(allowedChat, parsed.reply, token);
       await appendHermesMessage(db,{conversationId,externalMessageId:sent?.message_id?String(sent.message_id):undefined,authorType:"hermes",authorId:"hermes",source:"telegram",body:parsed.reply});
