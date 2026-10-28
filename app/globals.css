@@ -19,3 +19,4 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}.play-progress span{transition:none}.floating-reaction{display:none}}
 @media(max-width:620px){.room-heading{order:-10}.connection-banner{order:-9}}
 .modal-notice{font-size:11px;line-height:1.8;padding:11px 13px;background:#32283e;color:#e6d0fb;border:1px solid #655079;border-radius:7px;margin-bottom:16px}
+.hq-chat-block{margin:14px 0 8px;padding:8px 12px;border-left:2px solid #c9f27c;background:#172218;border-radius:8px;display:flex;justify-content:space-between;gap:10px}.hq-chat-block span{font-weight:700;color:#d5f78e}.hq-chat-block small{color:#91a08e}

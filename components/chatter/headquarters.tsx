@@ -16,7 +16,7 @@ const OfficeScene = dynamic(() => import('./office-scene'), { ssr: false, loadin
 const NAV = [{id:'office',label:'Oficina',icon:Building2},{id:'chat',label:'Chat',icon:MessageSquare},{id:'tasks',label:'Tareas',icon:ListTodo},{id:'leads',label:'Prospectos',icon:Target},{id:'ideas',label:'Ideas',icon:Lightbulb},{id:'reports',label:'Reportes',icon:ChartNoAxesCombined},{id:'employees',label:'Empleados',icon:Users}];
 const CHANNELS = ['general','dirección','marketing','creatividad','prospección','automatizaciones','analítica','ideas','cafetería'];
 type Action = 'work'|'coffee'|'meeting'|'relax'|'talk'|'game';
-type Message = {id:string;author:string;channel:string;text:string;time:string};
+type Message = {id:string;author:string;channel:string;text:string;time:string;block?:string};
 type Idea = {id:string;text:string;votes:number};
 type IntegrationStatus = {telegram:boolean;database:boolean;mode:'local'|'production'};
 type RealJob = {id:string;employee_id:string;objective:string;status:string;result_summary?:string|null;created_at:string};
@@ -102,9 +102,10 @@ export default function Headquarters() {
     if(!agent?.conversationId||!employee||!partner){openChat(id);return;}
     const thread=`social:${agent.conversationId}`;
     setMessages(previous=>previous.some(m=>m.channel===thread)?previous:[...previous,
-      {id:`${thread}:1`,author:employee.id,channel:thread,text:`${partner.name}, estaba pensando en ${employee.interests[0].toLowerCase()}. A veces las mejores ideas para el trabajo aparecen cuando cambiamos de perspectiva.`,time},
-      {id:`${thread}:2`,author:partner.id,channel:thread,text:`¡Sí! A mí me pasa con ${partner.interests[0].toLowerCase()}. Podemos compartir nuestras referencias después del café.`,time},
-      {id:`${thread}:3`,author:employee.id,channel:thread,text:'Me gusta. Primero una pausa y luego volvemos con ideas frescas.',time},
+      {id:`${thread}:1`,author:employee.id,channel:thread,text:`${partner.name}, estaba pensando en ${employee.interests[0].toLowerCase()}. ¿Cómo lo conectamos con nuestro objetivo de hoy?`,time,block:'Interacción de trabajo'},
+      {id:`${thread}:2`,author:partner.id,channel:thread,text:`Lo conectaría con ${partner.interests[0].toLowerCase()}. Así podemos entregar algo útil al siguiente responsable.`,time,block:'Interacción de trabajo'},
+      {id:`${thread}:3`,author:employee.id,channel:thread,text:'De acuerdo. Dejo un siguiente paso concreto y lo comparto con Hermes.',time,block:'Interacción de trabajo'},
+      {id:`${thread}:4`,author:partner.id,channel:thread,text:'Perfecto. Lo revisamos al terminar y reportamos el resultado, el bloqueo o la decisión.',time,block:'Interacción de trabajo'},
     ].slice(-200));
     setChannel(thread);go('chat');
   };
@@ -213,7 +214,7 @@ function ChatPanel({employees,channel,setChannel,messages,onSubmit,status}:{empl
       <div className="hq-chat-messages">
         <div className={`hq-chat-welcome ${isHermes?'director':''}`}><MessageCircle size={28}/><h3>{isHermes?'Tu canal con el Director de Operaciones':'Las buenas ideas empiezan con un hola.'}</h3><p>{isHermes?'Habla aquí con Hermes Montes. Tus instrucciones locales se conservarán en este navegador. Cuando publiquemos el webhook y Supabase, este espacio mostrará la misma conversación y los trabajos enviados desde Telegram.':'Este canal todavía funciona como una conversación local de demostración.'}</p>{isHermes&&<div className="hq-connection-state"><i className={status.telegram?'ready':''}/><span>{status.telegram?'Bot configurado en esta computadora':'Telegram pendiente de configurar'}</span><b>{status.mode==='production'&&status.database?'Sincronización disponible':'Falta publicar y conectar la base de datos'}</b></div>}
         </div>
-        {messages.filter(message=>message.channel===channel).map(message=><div className="hq-message" key={message.id}>{message.author==='ceo'?<span className="hq-ceo">JD</span>:<Avatar employee={employees.find(employee=>employee.id===message.author)||hermes} size={32}/>}<div><strong>{message.author==='ceo'?'Tú · CEO':employees.find(employee=>employee.id===message.author)?.name}<time>{message.time}</time>{message.author!=='ceo'&&<small>{isHermes?'VISTA LOCAL':'SIMULACIÓN'}</small>}</strong><p>{message.text}</p></div></div>)}
+        {messages.filter(message=>message.channel===channel).map((message,index)=><div key={message.id}>{message.block&&index===0&&<div className="hq-chat-block"><span>{message.block}</span><small>Máximo 4 intervenciones por participante</small></div>}<div className="hq-message">{message.author==='ceo'?<span className="hq-ceo">JD</span>:<Avatar employee={employees.find(employee=>employee.id===message.author)||hermes} size={32}/>}<div><strong>{message.author==='ceo'?'Tú · CEO':employees.find(employee=>employee.id===message.author)?.name}<time>{message.time}</time>{message.author!=='ceo'&&<small>{isHermes?'VISTA LOCAL':'SIMULACIÓN'}</small>}</strong><p>{message.text}</p></div></div></div>)}
       </div>
       <form className="hq-chat-compose" onSubmit={onSubmit}><input name="message" placeholder={isHermes?'Escribe una instrucción para Hermes…':'Escribe un mensaje…'} aria-label="Mensaje" maxLength={2000} required autoComplete="off"/><button type="submit" aria-label="Enviar mensaje"><Send size={17}/></button></form>
       <div className="hq-chat-note"><ShieldCheck size={11}/>{isHermes?(status.telegram?'Telegram configurado · Sincronización pendiente del despliegue':'Canal local · Telegram sin configurar'):'Conversación local de demostración'}</div>
