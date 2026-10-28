@@ -10,6 +10,7 @@ import { STATE_LABELS, STATE_COLORS } from '@/lib/chatter/types';
 import type { Employee, OfficeEvent } from '@/lib/chatter/types';
 import { useOffice } from '@/lib/chatter/use-office-store';
 import { SIMULATION_EPOCH } from '@/lib/chatter/simulation';
+import { browserSupabase, signInWithEmail, authorizedFetch } from '@/lib/supabase/browser';
 
 const OfficeScene = dynamic(() => import('./office-scene'), { ssr: false, loading: () => <div className="hq-scene-loading"><Building2 size={34} /><span>Abriendo las puertas de Chatter…</span><i /></div> });
 const NAV = [{id:'office',label:'Oficina',icon:Building2},{id:'chat',label:'Chat',icon:MessageSquare},{id:'tasks',label:'Tareas',icon:ListTodo},{id:'ideas',label:'Ideas',icon:Lightbulb},{id:'reports',label:'Reportes',icon:ChartNoAxesCombined},{id:'employees',label:'Empleados',icon:Users}];
@@ -38,6 +39,9 @@ export default function Headquarters() {
   const [date,setDate] = useState('Lunes, 26 de octubre');
   const [channel,setChannel] = useState('dm:hermes');
   const [integrationStatus,setIntegrationStatus] = useState<IntegrationStatus>({telegram:false,database:false,mode:'local'});
+  const [ownerAccess,setOwnerAccess] = useState<'unknown'|'signed_in'|'signed_out'>('unknown');
+  const [ownerEmail,setOwnerEmail] = useState('chattercontenidos@gmail.com');
+  const [loginSent,setLoginSent] = useState(false);
   const [messages,setMessages] = useState<Message[]>([]);
   const [ideas,setIdeas] = useState<Idea[]>([]);
   const [workspaceReady,setWorkspaceReady] = useState(false);
@@ -61,7 +65,8 @@ export default function Headquarters() {
   },[select]);
   useEffect(()=>{if(!ready||!workspaceReady)return;try{localStorage.setItem('chatter.workspace.v1',JSON.stringify({messages,ideas,labels}));}catch{}},[messages,ideas,labels,ready,workspaceReady]);
   useEffect(()=>{fetch('/api/chatter/status',{cache:'no-store'}).then(response=>response.ok?response.json():null).then(status=>{if(status)setIntegrationStatus(status);}).catch(()=>{});},[]);
-  useEffect(()=>{if(!integrationStatus.database)return;let cancelled=false;const sync=()=>fetch('/api/chatter/messages',{cache:'no-store'}).then(response=>response.ok?response.json():null).then(data=>{if(cancelled||!Array.isArray(data?.messages))return;const remote:Message[]=data.messages.map((message:{id:string;author_type:string;body:string;created_at:string})=>({id:message.id,author:message.author_type==='owner'?'ceo':'hermes',channel:'dm:hermes',text:message.body,time:new Intl.DateTimeFormat('es-MX',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/Mazatlan'}).format(new Date(message.created_at))}));setMessages(previous=>[...previous.filter(message=>message.channel!=='dm:hermes'),...remote].slice(-200));}).catch(()=>{});sync();const interval=window.setInterval(sync,5000);return()=>{cancelled=true;clearInterval(interval);};},[integrationStatus.database]);
+  useEffect(()=>{if(integrationStatus.mode!=='production'){setOwnerAccess('signed_in');return;}const db=browserSupabase();if(!db){setOwnerAccess('signed_out');return;}db.auth.getSession().then(({data})=>setOwnerAccess(data.session?'signed_in':'signed_out'));const {data:{subscription}}=db.auth.onAuthStateChange((_event,session)=>setOwnerAccess(session?'signed_in':'signed_out'));return()=>subscription.unsubscribe();},[integrationStatus.mode]);
+  useEffect(()=>{if(!integrationStatus.database||ownerAccess!=='signed_in')return;let cancelled=false;const sync=()=>{const request=integrationStatus.mode==='production'?authorizedFetch('/api/chatter/messages',{cache:'no-store'}):fetch('/api/chatter/messages',{cache:'no-store'});request.then(response=>response.ok?response.json():null).then(data=>{if(cancelled||!Array.isArray(data?.messages))return;const remote:Message[]=data.messages.map((message:{id:string;author_type:string;body:string;created_at:string})=>({id:message.id,author:message.author_type==='owner'?'ceo':'hermes',channel:'dm:hermes',text:message.body,time:new Intl.DateTimeFormat('es-MX',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/Mazatlan'}).format(new Date(message.created_at))}));setMessages(previous=>[...previous.filter(message=>message.channel!=='dm:hermes'),...remote].slice(-200));}).catch(()=>{});};sync();const interval=window.setInterval(sync,5000);return()=>{cancelled=true;clearInterval(interval);};},[integrationStatus.database,integrationStatus.mode,ownerAccess]);
   useEffect(()=>{if(!toast)return;const timeout=setTimeout(()=>setToast(''),3500);return()=>clearTimeout(timeout);},[toast]);
   useEffect(()=>{
     if(!modal&&!searching)return;
@@ -105,7 +110,7 @@ export default function Headquarters() {
     if(author==='hermes'){
       const pending={id:crypto.randomUUID(),author:'ceo',channel,text:text.slice(0,2000),time};
       setMessages(m=>[...m,pending].slice(-200));
-      fetch('/api/chatter/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({body:text,office:state.agents.map(agent=>({id:agent.id,state:agent.state,activity:agent.activity}))})}).then(async response=>{if(!response.ok)throw new Error('save_failed');const data=await response.json();if(data.reply)setMessages(m=>[...m,{id:crypto.randomUUID(),author:'hermes',channel:'dm:hermes',text:data.reply,time}].slice(-200));notify(data.reply?'Hermes respondió usando el contexto de la oficina':'Instrucción guardada; falta conectar el cerebro de Hermes');}).catch(()=>notify('No se pudo guardar en Supabase; el mensaje permanece en este navegador.'));
+      const request=integrationStatus.mode==='production'?authorizedFetch('/api/chatter/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({body:text,office:state.agents.map(agent=>({id:agent.id,state:agent.state,activity:agent.activity}))})}):fetch('/api/chatter/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({body:text,office:state.agents.map(agent=>({id:agent.id,state:agent.state,activity:agent.activity}))})});request.then(async response=>{if(!response.ok)throw new Error('save_failed');const data=await response.json();if(data.reply)setMessages(m=>[...m,{id:crypto.randomUUID(),author:'hermes',channel:'dm:hermes',text:data.reply,time}].slice(-200));notify(data.telegramSynced?'Hermes respondió y lo envió a Telegram':data.reply?'Hermes respondió usando el contexto de la oficina':'Instrucción guardada; falta conectar el cerebro de Hermes');}).catch(()=>notify('No se pudo guardar en Supabase; el mensaje permanece en este navegador.'));
     }else{
       const reply=`${recipient?.name||'Hermes'} recibió tu mensaje en esta oficina de demostración. Podemos reunirnos, tomar un café o revisar mi perfil.`;
       setMessages(m=>[...m,{id:crypto.randomUUID(),author:'ceo',channel,text:text.slice(0,2000),time},{id:crypto.randomUUID(),author,channel,text:reply,time}].slice(-200));
@@ -117,6 +122,7 @@ export default function Headquarters() {
   const toggleFullscreen=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await shellRef.current?.requestFullscreen();}catch{notify('Tu navegador no permite pantalla completa');}};
 
   return <div className="hq" ref={shellRef}>
+    {integrationStatus.mode==='production'&&ownerAccess==='signed_out'&&<div className="hq-modal-backdrop"><div className="hq-modal" role="dialog" aria-modal="true"><div className="hq-modal-symbol"><ShieldCheck size={24}/></div><h2>Acceso del propietario</h2><p>Enviaremos un enlace de acceso a tu correo para abrir la oficina y ver el chat de Hermes.</p>{loginSent?<p>Revisa tu correo y abre el enlace de acceso. Después vuelve a esta página.</p>:<form className="stack-form" onSubmit={async e=>{e.preventDefault();try{await signInWithEmail(ownerEmail);setLoginSent(true);}catch(error){notify((error as Error).message);}}}><label>Correo<input type="email" value={ownerEmail} onChange={e=>setOwnerEmail(e.target.value)} required/></label><button className="hq-primary hq-full-button" type="submit">Enviar enlace de acceso<ArrowRight size={16}/></button></form>}</div></div>}
     <header className="hq-topbar">
       <button className="hq-brand-button" onClick={()=>go('office')} aria-label="Chatter, ir a la oficina"><Brand /></button>
       <span className="hq-brand-divider"/><span className="hq-hq-badge">HQ<span>●</span></span>

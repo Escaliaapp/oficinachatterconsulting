@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiError, json, parseBody, requiredEnv } from "@/lib/supabase/server";
-import { appendHermesMessage, chatterDb, hermesConversation, requireLocalOffice } from "@/lib/chatter/operations/database";
+import { appendHermesMessage, officeDatabase, hermesConversation } from "@/lib/chatter/operations/database";
 import { answerAsHermes } from "@/lib/chatter/operations/hermes-ai";
 import { sendTelegram } from "@/lib/chatter/operations/telegram";
 
@@ -11,8 +11,7 @@ const officeMessageSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    requireLocalOffice(request);
-    const db = chatterDb();
+    const db = await officeDatabase(request);
     const conversationId = await hermesConversation(db, requiredEnv("TELEGRAM_OWNER_CHAT_ID"));
     const result = await db.from("chatter_messages").select("id,author_type,author_id,source,body,created_at,job_id").eq("conversation_id",conversationId).order("created_at",{ascending:true}).limit(200);
     if (result.error) throw new Error("messages_read_failed");
@@ -22,9 +21,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    requireLocalOffice(request);
     const input = await parseBody(request,officeMessageSchema,4_000);
-    const db = chatterDb();
+    const db = await officeDatabase(request);
     const conversationId = await hermesConversation(db,requiredEnv("TELEGRAM_OWNER_CHAT_ID"));
     await appendHermesMessage(db,{conversationId,authorType:"owner",authorId:"owner",source:"office",body:input.body});
     const [messagesResult,jobsResult] = await Promise.all([

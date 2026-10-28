@@ -38,6 +38,16 @@ export async function requireUser(request: Request) {
   if (profileResult.data.suspended_at) throw new ApiError(403, "account_suspended", "Esta cuenta está suspendida.");
   return { db, user: data.user, profile: profileResult.data as { id: string; display_name: string; suspended_at: string | null; stripe_customer_id: string | null } };
 }
+export async function requireOfficeUser(request: Request) {
+  requireProduction();
+  const authorization = request.headers.get("authorization") || "";
+  if (!/^Bearer [^\s]+$/.test(authorization) || authorization.length > 8192) throw new ApiError(401, "authentication_required", "Inicia sesión para continuar.");
+  const db = serviceSupabase();
+  const { data, error } = await db.auth.getUser(authorization.slice(7));
+  const ownerEmail = requiredEnv("CHATTER_OWNER_EMAIL").toLowerCase();
+  if (error || !data.user || data.user.email?.toLowerCase() !== ownerEmail) throw new ApiError(403, "office_owner_required", "Esta oficina sólo está disponible para su propietario.");
+  return { db, user: data.user };
+}
 export async function requireRoomModerator(request: Request, roomId: string) {
   const context = await requireUser(request);
   const [roles, membership] = await Promise.all([

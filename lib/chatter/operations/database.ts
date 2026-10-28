@@ -1,6 +1,6 @@
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ApiError } from "@/lib/supabase/server";
+import { ApiError, requireOfficeUser } from "@/lib/supabase/server";
 
 function value(key: string) {
   const found = process.env[key]?.trim();
@@ -23,6 +23,12 @@ export function requireLocalOffice(request: Request) {
     const sameLocalServer = localHosts.has(source.hostname) && source.protocol === url.protocol && source.port === url.port;
     if (!sameLocalServer) throw new ApiError(403, "invalid_origin", "Origen no permitido.");
   }
+}
+
+export async function officeDatabase(request: Request) {
+  if (process.env.APP_MODE === "production") return (await requireOfficeUser(request)).db;
+  requireLocalOffice(request);
+  return chatterDb();
 }
 
 export async function hermesConversation(db: SupabaseClient, chatId: string) {
