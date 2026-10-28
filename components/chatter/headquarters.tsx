@@ -10,6 +10,8 @@ import { STATE_LABELS, STATE_COLORS } from '@/lib/chatter/types';
 import type { Employee, OfficeEvent } from '@/lib/chatter/types';
 import { useOffice } from '@/lib/chatter/use-office-store';
 import { SIMULATION_EPOCH } from '@/lib/chatter/simulation';
+import { dialogueLines, speechTurn } from '@/lib/chatter/dialogue';
+import ConversationLog, { type ConversationEntry } from './conversation-log';
 import { browserSupabase, signInWithEmail, authorizedFetch } from '@/lib/supabase/browser';
 
 const OfficeScene = dynamic(() => import('./office-scene'), { ssr: false, loading: () => <div className="hq-scene-loading"><Building2 size={34} /><span>Abriendo las puertas de Chatter…</span><i /></div> });
@@ -45,6 +47,7 @@ export default function Headquarters() {
   const [ownerEmail,setOwnerEmail] = useState('chattercontenidos@gmail.com');
   const [loginSent,setLoginSent] = useState(false);
   const [messages,setMessages] = useState<Message[]>([]);
+  const [conversations,setConversations] = useState<ConversationEntry[]>([]);
   const [realJobs,setRealJobs] = useState<RealJob[]>([]);
   const [leads,setLeads] = useState<Lead[]>([]);
   const [ideas,setIdeas] = useState<Idea[]>([]);
@@ -59,6 +62,9 @@ export default function Headquarters() {
     const hydrate=window.setTimeout(()=>{
       update();
       try {const data=JSON.parse(localStorage.getItem('chatter.workspace.v1')||'{}');if(Array.isArray(data.messages))setMessages(data.messages.filter((m:Message)=>m&&typeof m.id==='string'&&typeof m.text==='string'&&typeof m.author==='string'&&typeof m.channel==='string'&&typeof m.time==='string').slice(-200));if(Array.isArray(data.ideas))setIdeas(data.ideas.filter((i:Idea)=>i&&typeof i.id==='string'&&typeof i.text==='string'&&Number.isFinite(i.votes)).slice(-50));if(typeof data.labels==='boolean')setLabels(data.labels);}catch{}
+      try { const saved=JSON.parse(localStorage.getItem('chatter.conversations.v1')||'[]');
+        if(Array.isArray(saved))setConversations(saved.filter(e=>e&&['id','thread','author','text','kind','time'].every(key=>typeof e[key]==='string')).slice(-800));
+      } catch {}
       setWorkspaceReady(true);
     },0);
     const interval=window.setInterval(update,30000);
@@ -68,6 +74,20 @@ export default function Headquarters() {
     return()=>{clearTimeout(hydrate);clearInterval(interval);window.removeEventListener('keydown',shortcut);document.removeEventListener('fullscreenchange',fs);};
   },[select]);
   useEffect(()=>{if(!ready||!workspaceReady)return;try{localStorage.setItem('chatter.workspace.v1',JSON.stringify({messages,ideas,labels}));}catch{}},[messages,ideas,labels,ready,workspaceReady]);
+  useEffect(()=>{
+    if(!ready||!workspaceReady)return;
+    const entries:ConversationEntry[]=state.agents.flatMap(agent=>{
+      const person=state.employees.find(e=>e.id===agent.id);
+      const turn=speechTurn(agent,state.agents);
+      if(!person||turn===null||!agent.conversationId)return [];
+      return [{id:agent.conversationId+':'+agent.id+':'+turn,thread:agent.conversationId,author:agent.id,text:dialogueLines(person)[turn],kind:agent.state==='meeting'?'Reunión · Sala de juntas':'Interacción de trabajo · Oficina',time:new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}];
+    });
+    if(entries.length)setConversations(previous=>{
+      const ids=new Set(previous.map(e=>e.id));const fresh=entries.filter(e=>!ids.has(e.id));
+      return fresh.length?[...previous,...fresh].slice(-800):previous;
+    });
+  },[ready,workspaceReady,state.agents,state.employees]);
+  useEffect(()=>{if(workspaceReady)try{localStorage.setItem('chatter.conversations.v1',JSON.stringify(conversations));}catch{}},[workspaceReady,conversations]);
   useEffect(()=>{fetch('/api/chatter/status',{cache:'no-store'}).then(response=>response.ok?response.json():null).then(status=>{if(status)setIntegrationStatus(status);}).catch(()=>{});},[]);
   useEffect(()=>{if(integrationStatus.mode!=='production'){setOwnerAccess('signed_in');return;}const db=browserSupabase();if(!db){setOwnerAccess('signed_out');return;}db.auth.getSession().then(({data})=>setOwnerAccess(data.session?'signed_in':'signed_out'));const {data:{subscription}}=db.auth.onAuthStateChange((_event,session)=>setOwnerAccess(session?'signed_in':'signed_out'));return()=>subscription.unsubscribe();},[integrationStatus.mode]);
   useEffect(()=>{if(!integrationStatus.database||ownerAccess!=='signed_in')return;let cancelled=false;const sync=()=>{const request=integrationStatus.mode==='production'?authorizedFetch('/api/chatter/messages',{cache:'no-store'}):fetch('/api/chatter/messages',{cache:'no-store'});request.then(response=>response.ok?response.json():null).then(data=>{if(cancelled||!Array.isArray(data?.messages))return;const seen=new Set<string>();const remote:Message[]=data.messages.map((message:{id:string;author_type:string;body:string;created_at:string})=>({id:message.id,author:message.author_type==='owner'?'ceo':'hermes',channel:'dm:hermes',text:message.body,time:new Intl.DateTimeFormat('es-MX',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/Mazatlan'}).format(new Date(message.created_at))})).filter((message:Message)=>{const key=`${message.author}:${message.text}`;if(seen.has(key))return false;seen.add(key);return true;});setMessages(previous=>[...previous.filter(message=>message.channel!=='dm:hermes'),...remote].slice(-200));}).catch(()=>{});};sync();const interval=window.setInterval(sync,5000);return()=>{cancelled=true;clearInterval(interval);};},[integrationStatus.database,integrationStatus.mode,ownerAccess]);
@@ -96,18 +116,9 @@ export default function Headquarters() {
   const doCommand=(id:string,action:Action)=>{command(id,action);notify(action==='meeting'?'Camino a la sala de juntas':action==='coffee'?'Una pausa para recargar ideas':'Actividad actualizada');};
   const openChat=(id:string)=>{setChannel(`dm:${id}`);go('chat');};
   const openConversation=(id:string)=>{
-    const agent=state.agents.find(a=>a.id===id);
-    const employee=state.employees.find(e=>e.id===id);
-    const partner=state.employees.find(e=>e.id===agent?.partnerId);
-    if(!agent?.conversationId||!employee||!partner){openChat(id);return;}
-    const thread=`social:${agent.conversationId}`;
-    setMessages(previous=>previous.some(m=>m.channel===thread)?previous:[...previous,
-      {id:`${thread}:1`,author:employee.id,channel:thread,text:`${partner.name}, estaba pensando en ${employee.interests[0].toLowerCase()}. ¿Cómo lo conectamos con nuestro objetivo de hoy?`,time,block:'Interacción de trabajo'},
-      {id:`${thread}:2`,author:partner.id,channel:thread,text:`Lo conectaría con ${partner.interests[0].toLowerCase()}. Así podemos entregar algo útil al siguiente responsable.`,time,block:'Interacción de trabajo'},
-      {id:`${thread}:3`,author:employee.id,channel:thread,text:'De acuerdo. Dejo un siguiente paso concreto y lo comparto con Hermes.',time,block:'Interacción de trabajo'},
-      {id:`${thread}:4`,author:partner.id,channel:thread,text:'Perfecto. Lo revisamos al terminar y reportamos el resultado, el bloqueo o la decisión.',time,block:'Interacción de trabajo'},
-    ].slice(-200));
-    setChannel(thread);go('chat');
+    const current=state.agents.find(a=>a.id===id)?.conversationId;
+    const prior=[...conversations].reverse().find(e=>e.author===id)?.thread;
+    setChannel(current||prior?'social:'+(current??prior):'team');go('chat');
   };
   const cameraMove=(type:'zoom-in'|'zoom-out'|'reset'|'rotate')=>setCamera(c=>({type,nonce:(c?.nonce||0)+1}));
   const addMessage=(e:FormEvent<HTMLFormElement>)=>{
@@ -164,7 +175,7 @@ export default function Headquarters() {
                 <div className="hq-scene-controls"><div className="hq-camera-controls"><button onClick={()=>cameraMove('zoom-out')} aria-label="Alejar cámara"><Minus size={15}/></button><span>ZOOM</span><button onClick={()=>cameraMove('zoom-in')} aria-label="Acercar cámara"><Plus size={15}/></button><i/><button onClick={()=>cameraMove('rotate')} aria-label="Rotar cámara"><RotateCcw size={15}/></button><button onClick={()=>cameraMove('reset')} aria-label="Restablecer cámara"><Focus size={16}/></button></div><div className="hq-simulation-controls"><button onClick={togglePause} aria-label={state.paused?'Reanudar simulación':'Pausar simulación'}>{state.paused?<Play size={14}/>:<Pause size={14}/>}</button><i/>{([1,2,4] as const).map(speed=><button key={speed} onClick={()=>setSpeed(speed)} className={state.speed===speed?'active':''} aria-label={`Velocidad ${speed}x`}>{speed}×</button>)}<i/><button onClick={()=>setLabels(!labels)} className={labels?'label-active':''} aria-label="Mostrar u ocultar nombres" aria-pressed={labels}><Eye size={15}/></button></div></div>
                 <div className="hq-scene-hint"><MousePointer2 size={12}/><span>Arrastra para explorar</span><i/>Scroll para acercar<i/>Clic para conocer al equipo</div>
               </>:view==='employees'?<div className="hq-section-view"><div className="hq-view-title"><h2>Conoce a tu equipo <span>{filtered.length}</span></h2><label className="hq-input-search"><Search size={14}/><input placeholder="Buscar especialista…" value={query} onChange={e=>setQuery(e.target.value)}/></label></div><div className="hq-employee-grid">{filtered.map(employee=>{const agent=state.agents.find(a=>a.id===employee.id)!;return <button key={employee.id} className="hq-employee-tile" onClick={()=>focusEmployee(employee.id)}><Avatar employee={employee} size={64}/><span className="hq-tile-status" style={{color:STATE_COLORS[agent.state]}}><i/>{STATE_LABELS[agent.state]}</span><h3>{employee.name} {employee.lastName}</h3><p>{employee.role}</p><div className="hq-tile-tools">{employee.tools.slice(0,2).join(' · ')}</div><span className="hq-view-profile">Conocer a {employee.name}<ArrowUpRight size={14}/></span></button>;})}</div>{!filtered.length&&<EmptyState icon={<Search/>} title="Sin coincidencias" text="Prueba otro nombre o departamento."/>}</div>
-              :view==='chat'?<ChatPanel employees={state.employees} channel={channel} setChannel={setChannel} messages={messages} onSubmit={addMessage} status={integrationStatus}/>
+              :view==='chat'?<ChatPanel employees={state.employees} channel={channel} setChannel={setChannel} messages={messages} conversations={conversations} onSubmit={addMessage} status={integrationStatus}/>
               :view==='tasks'?<div className="hq-section-view"><div className="hq-view-title"><h2>Tareas reales</h2><span className="hq-outline-pill">SUPABASE</span></div>{integrationStatus.mode==='production'?<div className="hq-task-list">{realJobs.map(job=>{const e=state.employees.find(x=>x.id===job.employee_id);return <article key={job.id} className="hq-task-row"><Avatar employee={e||state.employees[0]} size={36}/><div><strong>{job.objective}</strong><span>{e?.name||job.employee_id} · {new Date(job.created_at).toLocaleString('es-MX')}</span>{job.result_summary&&<small>{job.result_summary}</small>}</div><span className="hq-task-state"><i/>{job.status}</span></article>;})}{!realJobs.length&&<EmptyState icon={<ListTodo/>} title="Sin tareas registradas" text="Las tareas reales aparecerán aquí cuando Hermes las asigne."/>}</div>:<div className="hq-phase-note"><Bot size={17}/><p>La vista local no muestra operaciones reales. Abre la oficina pública para consultar las tareas de Supabase.</p></div>}</div>
               :view==='leads'?<div className="hq-section-view"><div className="hq-view-title"><h2>Prospectos encontrados <span>{leads.length}</span></h2><span className="hq-outline-pill">GOHIGHLEVEL</span></div>{integrationStatus.mode==='production'?<div className="hq-leads-table">{leads.map(lead=><article key={lead.id}><div><strong>{lead.name}</strong><span>{lead.address||'Dirección no disponible'}</span><small>{lead.phone||'Sin teléfono'} · {lead.source}</small></div><div className="hq-lead-links">{lead.maps_url&&<a href={lead.maps_url} target="_blank" rel="noreferrer">Google Maps</a>}{lead.website&&<a href={lead.website} target="_blank" rel="noreferrer">Sitio web</a>}<b className={`hq-lead-status ${lead.crm_status}`}>{lead.crm_status==='sent'?'En GoHighLevel':lead.crm_status==='duplicate'?'Duplicado':lead.crm_status}</b></div></article>)}{!leads.length&&<EmptyState icon={<Target/>} title="Aún no hay prospectos" text="Ejecuta una tarea de Diego para que aparezcan aquí."/>}</div>:<div className="hq-phase-note"><Bot size={17}/><p>Los prospectos reales se muestran en la oficina pública después de iniciar sesión.</p></div>}</div>
               :view==='ideas'?<div className="hq-section-view"><div className="hq-ideas-hero"><div><Sparkles size={25}/></div><span>UN ESPACIO PARA LO QUE SIGUE</span><h2>¿Y si lo hacemos posible?</h2><p>Guarda esas ideas que merecen una segunda conversación.</p></div><form className="hq-idea-form" onSubmit={addIdea}><input name="idea" placeholder="Tengo una idea para Chatter…" aria-label="Nueva idea" maxLength={500} required/><button className="hq-primary" type="submit"><Plus size={16}/>Guardar idea</button></form><div className="hq-ideas-list">{ideas.map(i=><article key={i.id}><span className="hq-idea-bulb"><Lightbulb size={18}/></span><div><span>PROPUESTA DEL CEO</span><p>{i.text}</p><small>Guardada en este dispositivo · Pendiente de desarrollar</small></div><button aria-label="Apoyar idea" onClick={()=>setIdeas(a=>a.map(x=>x.id===i.id?{...x,votes:x.votes+1}:x))}><ArrowUpRight size={14}/>{i.votes}</button></article>)}</div>{!ideas.length&&<EmptyState icon={<Lightbulb/>} title="Hay espacio para tu primera idea" text="Las propuestas aparecerán aquí, listas para desarrollarse."/>}</div>
@@ -195,28 +206,32 @@ export default function Headquarters() {
 }
 
 function EmptyState({icon,title,text}:{icon:React.ReactNode;title:string;text:string}){return <div className="hq-empty-state"><div>{icon}</div><h3>{title}</h3><p>{text}</p></div>;}
-function ChatPanel({employees,channel,setChannel,messages,onSubmit,status}:{employees:Employee[];channel:string;setChannel:(channel:string)=>void;messages:Message[];onSubmit:(event:FormEvent<HTMLFormElement>)=>void;status:IntegrationStatus}){
+function ChatPanel({employees,channel,setChannel,messages,conversations,onSubmit,status}:{employees:Employee[];channel:string;setChannel:(channel:string)=>void;messages:Message[];conversations:ConversationEntry[];onSubmit:(event:FormEvent<HTMLFormElement>)=>void;status:IntegrationStatus}){
   const directId=channel.startsWith('dm:')?channel.slice(3):null;
   const direct=employees.find(employee=>employee.id===directId);
   const hermes=employees.find(employee=>employee.id==='hermes')!;
   const isHermes=directId==='hermes';
+  const team=channel==='team'||channel.startsWith('social:');
   return <div className="hq-chat-layout">
     <aside className="hq-channel-list">
       <h3>Dirección</h3>
       <span>CANAL PRINCIPAL</span>
       <button className={isHermes?'active':''} onClick={()=>setChannel('dm:hermes')}><Avatar employee={hermes} size={24}/><span><b>Hermes</b><small>Director</small></span></button>
       <span>EQUIPO Y CANALES</span>
+      <button className={team?'active':''} onClick={()=>setChannel('team')}><Users size={14}/>Conversaciones del equipo</button>
       {CHANNELS.map(name=><button key={name} className={channel===name?'active':''} onClick={()=>setChannel(name)}><Hash size={14}/>{name}</button>)}
       {employees.filter(employee=>employee.id!=='hermes').map(employee=><button key={employee.id} className={channel===`dm:${employee.id}`?'active':''} onClick={()=>setChannel(`dm:${employee.id}`)}><Avatar employee={employee} size={22}/>{employee.name}</button>)}
     </aside>
     <div className="hq-chat-area">
       <div className="hq-chat-title">{direct?<><Avatar employee={direct} size={30}/><div><strong>{direct.name} {direct.lastName}</strong><small>{direct.role}</small></div></>:<><Hash size={18}/>{channel.startsWith('social:')?'Conversación del equipo':channel}</>}<span className={status.telegram?'prepared':'local'}>{status.telegram?'TELEGRAM PREPARADO':'MODO LOCAL'}</span></div>
       <div className="hq-chat-messages">
+        {team?<ConversationLog entries={conversations} employees={employees} thread={channel.startsWith('social:')?channel.slice(7):undefined}/>:<>
         <div className={`hq-chat-welcome ${isHermes?'director':''}`}><MessageCircle size={28}/><h3>{isHermes?'Tu canal con el Director de Operaciones':'Las buenas ideas empiezan con un hola.'}</h3><p>{isHermes?'Habla aquí con Hermes Montes. Tus instrucciones locales se conservarán en este navegador. Cuando publiquemos el webhook y Supabase, este espacio mostrará la misma conversación y los trabajos enviados desde Telegram.':'Este canal todavía funciona como una conversación local de demostración.'}</p>{isHermes&&<div className="hq-connection-state"><i className={status.telegram?'ready':''}/><span>{status.telegram?'Bot configurado en esta computadora':'Telegram pendiente de configurar'}</span><b>{status.mode==='production'&&status.database?'Sincronización disponible':'Falta publicar y conectar la base de datos'}</b></div>}
         </div>
         {messages.filter(message=>message.channel===channel).map((message,index)=><div key={message.id}>{message.block&&index===0&&<div className="hq-chat-block"><span>{message.block}</span><small>Máximo 4 intervenciones por participante</small></div>}<div className="hq-message">{message.author==='ceo'?<span className="hq-ceo">JD</span>:<Avatar employee={employees.find(employee=>employee.id===message.author)||hermes} size={32}/>}<div><strong>{message.author==='ceo'?'Tú · CEO':employees.find(employee=>employee.id===message.author)?.name}<time>{message.time}</time>{message.author!=='ceo'&&<small>{isHermes?'VISTA LOCAL':'SIMULACIÓN'}</small>}</strong><p>{message.text}</p></div></div></div>)}
+        </>}
       </div>
-      <form className="hq-chat-compose" onSubmit={onSubmit}><input name="message" placeholder={isHermes?'Escribe una instrucción para Hermes…':'Escribe un mensaje…'} aria-label="Mensaje" maxLength={2000} required autoComplete="off"/><button type="submit" aria-label="Enviar mensaje"><Send size={17}/></button></form>
+      {!team&&<form className="hq-chat-compose" onSubmit={onSubmit}><input name="message" placeholder={isHermes?'Escribe una instrucción para Hermes…':'Escribe un mensaje…'} aria-label="Mensaje" maxLength={2000} required autoComplete="off"/><button type="submit" aria-label="Enviar mensaje"><Send size={17}/></button></form>}
       <div className="hq-chat-note"><ShieldCheck size={11}/>{isHermes?(status.telegram?'Telegram configurado · Sincronización pendiente del despliegue':'Canal local · Telegram sin configurar'):'Conversación local de demostración'}</div>
     </div>
   </div>;

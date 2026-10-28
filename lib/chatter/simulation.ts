@@ -11,7 +11,7 @@ const WORK_ACTIVITIES: Record<string, string> = {
   lucia: 'Investigando tendencias de búsqueda', jorge: 'Diseñando un flujo de automatización',
   pablo: 'Explorando el tablero de métricas', carlos: 'Preparando una reunión de seguimiento',
 };
-const ROUTINE: AgentCommand[] = ['work', 'coffee', 'work', 'talk', 'work', 'meeting', 'work', 'relax', 'game'];
+const ROUTINE: AgentCommand[] = ['talk', 'work', 'talk', 'meeting', 'talk', 'coffee', 'talk', 'work', 'meeting'];
 const CONVERSATION_SPOTS: [Point2, Point2][] = [
   [[5.5, -3.5], [6.7, -3.5]],
   [[4, -2], [5.2, -2]],
@@ -71,13 +71,19 @@ export function commandAgent(state: OfficeState, id: string, action: AgentComman
   } else if (action === 'game') {
     agents[index] = travel(agent, OFFICE_LAYOUT.gameSeats[index], action, 'break'); message = 'Se suma a una partida de futbolito';
   } else if (action === 'meeting') {
+    const conversationId=agents.find(a=>a.target==='meeting'&&a.conversationId)?.conversationId??`meeting-${id}-${Math.round(state.simulationTime*1000)}`;
     agents[index] = travel(agent, OFFICE_LAYOUT.meetingSeats[index], action, 'meeting'); message = id === 'hermes' ? 'Convoca una reunión breve de coordinación' : 'Se reúne con Hermes para revisar prioridades'; type = 'meeting';
+    agents[index]={...agents[index],conversationId};
     if (id !== 'hermes') {
       const hermesIndex = agents.findIndex(a => a.id === 'hermes');
-      if (hermesIndex >= 0 && agents[hermesIndex].state !== 'offline') agents[hermesIndex] = travel({ ...agents[hermesIndex], partnerId: undefined, conversationId: undefined }, OFFICE_LAYOUT.meetingSeats[hermesIndex], 'meeting', 'meeting');
+      if (hermesIndex >= 0 && agents[hermesIndex].state !== 'offline'&&agents[hermesIndex].conversationId!==conversationId) agents[hermesIndex] = travel({ ...agents[hermesIndex], partnerId: undefined, conversationId }, OFFICE_LAYOUT.meetingSeats[hermesIndex], 'meeting', 'meeting');
     }
   } else {
-    const chosen = agents.findIndex((a, i) => i !== index && a.state !== 'offline' && a.state !== 'walking' && a.state !== 'meeting' && !a.partnerId);
+    const department=state.employees.find(e=>e.id===id)?.department;
+    const candidates=agents.map((a,i)=>({a,i})).filter(({a,i})=>i!==index&&a.state!=='offline'&&a.state!=='walking'&&a.state!=='meeting'&&!a.partnerId);
+    const preferred=candidates.find(({a})=>state.employees.find(e=>e.id===a.id)?.department===department);
+    const linked=candidates.find(({a})=>[id,a.id].sort().join('-') in PAIR_DECISIONS);
+    const chosen=(preferred??linked??candidates[0])?.i??-1;
     if (chosen < 0) return commandAgent(state, id, 'relax');
     const spot = CONVERSATION_SPOTS.find(pair => !agents.some((a, i) => {
       if (i === index || i === chosen || a.target !== 'talk' || !a.partnerId) return false;
@@ -147,7 +153,7 @@ export function stepSimulation(state: OfficeState, deltaSeconds: number): Office
     return facing?{...agent,rotation:Math.atan2(facing[0]-agent.position[0],facing[1]-agent.position[1])}:agent;
   })};
   // At most one routine is scheduled per tick to avoid bursts of duplicate social events.
-  const index = next.agents.findIndex((agent, i) => agent.state !== 'walking' && agent.state !== 'offline' && agent.elapsed >= (agent.state === 'working' || agent.state === 'researching' ? 35 + i * 2 : 20 + i));
+  const index = next.agents.findIndex((agent, i) => agent.state !== 'walking' && agent.state !== 'offline' && agent.elapsed >= (agent.state === 'talking' ? 45 : agent.state === 'meeting' ? 85 : agent.state === 'working' || agent.state === 'researching' ? 16 + i : 20 + i));
   if (index >= 0) {
     const agent = next.agents[index]; const cycle = agent.cycle + 1;
     const action = agent.target === 'work' ? ROUTINE[cycle % ROUTINE.length] : 'work';
