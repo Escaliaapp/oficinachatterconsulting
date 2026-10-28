@@ -13,7 +13,8 @@
     "chatter:setup-telegram": "node scripts/setup-chatter-telegram.mjs",
     "chatter:setup-supabase": "node scripts/setup-chatter-supabase.mjs",
     "chatter:setup-openai": "node scripts/setup-chatter-openai.mjs",
-    "chatter:setup-openrouter": "node scripts/setup-chatter-openrouter.mjs"
+    "chatter:setup-openrouter": "node scripts/setup-chatter-openrouter.mjs",
+    "chatter:setup-webhook": "node scripts/setup-chatter-webhook.mjs"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",
