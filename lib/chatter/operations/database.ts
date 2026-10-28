@@ -36,9 +36,12 @@ export async function hermesConversation(db: SupabaseClient, chatId: string) {
 
 export async function appendHermesMessage(db: SupabaseClient, message: { conversationId:string; externalMessageId?:string; authorType:"owner"|"hermes"|"system"; authorId?:string; source:"telegram"|"office"|"system"; body:string; jobId?:string }) {
   const row = { conversation_id:message.conversationId, external_message_id:message.externalMessageId ?? null, author_type:message.authorType, author_id:message.authorId ?? null, source:message.source, body:message.body.slice(0,4096), job_id:message.jobId ?? null };
-  const result = message.externalMessageId
-    ? await db.from("chatter_messages").upsert(row,{onConflict:"source,external_message_id",ignoreDuplicates:true})
-    : await db.from("chatter_messages").insert(row);
+  if (message.externalMessageId) {
+    const existing = await db.from("chatter_messages").select("id").eq("source", message.source).eq("external_message_id", message.externalMessageId).maybeSingle();
+    if (existing.error) throw new ApiError(503, "message_lookup_failed", `No se pudo comprobar el mensaje (${existing.error.code || "provider_error"}).`);
+    if (existing.data) return;
+  }
+  const result = await db.from("chatter_messages").insert(row);
   if (result.error) throw new ApiError(503, "message_store_failed", `No se pudo guardar el mensaje (${result.error.code || "provider_error"}).`);
 }
 
