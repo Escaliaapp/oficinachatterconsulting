@@ -1,6 +1,7 @@
 import { apiError, json, requiredEnv, requireOfficeUser, serviceSupabase } from "@/lib/supabase/server";
 import { searchGooglePlaces } from "@/lib/chatter/operations/google-places";
 import { createGoHighLevelContact } from "@/lib/chatter/operations/gohighlevel";
+import { searchApolloPeople } from "@/lib/chatter/operations/apollo";
 
 export async function POST(request: Request) {
   try {
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
     if (!job) return json({ ok: true, message: "No hay tareas de Diego en cola." });
     await db.from("chatter_jobs").update({ status: "running" }).eq("id", job.id);
     const leads = await searchGooglePlaces(job.objective, 20);
+    const people = process.env.APOLLO_API_KEY?.trim() ? await searchApolloPeople(job.objective) : [];
     let sent = 0;
     for (const lead of leads) {
       const existing = lead.placeId ? await db.from("chatter_leads").select("id").eq("place_id", lead.placeId).maybeSingle() : { data: null };
@@ -21,7 +23,11 @@ export async function POST(request: Request) {
       if (lead.phone || lead.website) { const created = await createGoHighLevelContact({ name: lead.name, phone: lead.phone, website: lead.website, companyName: lead.name, source: "Diego · Google Places" }); crmContactId = created.contact?.id ?? null; crmStatus = "sent"; sent++; }
       await db.from("chatter_leads").insert({ job_id: job.id, name: lead.name, address: lead.address, phone: lead.phone, website: lead.website, maps_url: lead.mapsUrl, place_id: lead.placeId, crm_contact_id: crmContactId, crm_status: crmStatus });
     }
-    const summary = `Google Places encontró ${leads.length} prospectos; ${sent} enviados a GoHighLevel.`;
+    for (const person of people) {
+      const name = [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Contacto Apollo';
+      await db.from("chatter_leads").insert({ job_id: job.id, name, source: "apollo", crm_status: "pending" });
+    }
+    const summary = `Google Places encontró ${leads.length} empresas; Apollo encontró ${people.length} responsables; ${sent} enviados a GoHighLevel.`;
     await db.from("chatter_jobs").update({ status: "completed", result_summary: summary }).eq("id", job.id);
     return json({ ok: true, jobId: job.id, found: leads.length, sentToGoHighLevel: sent, leads });
   } catch (error) { return apiError(error); }
