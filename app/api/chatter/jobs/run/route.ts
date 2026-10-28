@@ -12,9 +12,14 @@ export async function POST(request: Request) {
     if (error) throw new Error("jobs_read_failed");
     const job = jobs?.[0];
     if (!job) return json({ ok: true, message: "No hay tareas de Diego en cola." });
+    const dailyLimit = Math.max(1, Number(process.env.DIEGO_DAILY_LIMIT || 10));
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const recent = await db.from("chatter_leads").select("id", { count: "exact", head: true }).gte("created_at", since);
+    const remaining = Math.max(0, dailyLimit - (recent.count ?? 0));
+    if (!remaining) { await db.from("chatter_jobs").update({ status: "completed", result_summary: `No se ejecutó: límite de ${dailyLimit} prospectos alcanzado en las últimas 24 horas.` }).eq("id", job.id); return json({ ok: true, jobId: job.id, message: `Límite de ${dailyLimit} prospectos alcanzado en las últimas 24 horas.` }); }
     await db.from("chatter_jobs").update({ status: "running" }).eq("id", job.id);
-    const leads = await searchGooglePlaces(job.objective, 20);
-    const people = process.env.APOLLO_API_KEY?.trim() ? await searchApolloPeople(job.objective) : [];
+    const leads = (await searchGooglePlaces(job.objective, Math.min(20, remaining))).slice(0, remaining);
+    const people = process.env.APOLLO_API_KEY?.trim() ? (await searchApolloPeople(job.objective)).slice(0, Math.max(0, remaining - leads.length)) : [];
     let sent = 0;
     for (const lead of leads) {
       const existing = lead.placeId ? await db.from("chatter_leads").select("id").eq("place_id", lead.placeId).maybeSingle() : { data: null };
