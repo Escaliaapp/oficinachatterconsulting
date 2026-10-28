@@ -1,4 +1,4 @@
-import { requiredEnv } from "@/lib/supabase/server";
+import { ApiError, requiredEnv } from "@/lib/supabase/server";
 import { CHATTER_ICP, extractCity } from "@/lib/chatter/operations/icp";
 
 export type ApolloPerson = { id?: string; firstName?: string; lastName?: string; title?: string; linkedinUrl?: string; linkedin_url?: string; organization?: { name?: string; primaryDomain?: string } };
@@ -23,7 +23,10 @@ export async function searchApolloPeople(query: string): Promise<ApolloPerson[]>
     }),
     cache: "no-store",
   });
-  if (!response.ok) throw new Error("apollo_people_search_failed");
+  if (!response.ok) {
+    const code = response.status === 401 ? "apollo_api_key_invalid" : response.status === 403 ? "apollo_access_denied" : response.status === 422 ? "apollo_filters_invalid" : response.status === 429 ? "apollo_rate_limited" : "apollo_people_search_failed";
+    throw new ApiError(502, code, code === "apollo_filters_invalid" ? "Apollo rechazó alguno de los filtros ICP." : code === "apollo_api_key_invalid" ? "La API key de Apollo no es válida." : code === "apollo_access_denied" ? "La cuenta o API key de Apollo no tiene acceso a People Search." : code === "apollo_rate_limited" ? "Apollo limitó temporalmente las solicitudes." : "Apollo no pudo completar la búsqueda.");
+  }
   const data = await response.json() as { people?: ApolloPerson[] };
   return data.people ?? [];
 }
